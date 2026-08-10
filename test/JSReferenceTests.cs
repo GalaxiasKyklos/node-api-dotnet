@@ -164,6 +164,12 @@ public class JSReferenceTests
     {
         public FinalizerTestReference(JSValue value) : base(value) { }
 
-        public void SimulateFinalize() => Dispose(disposing: false);
+        // Invokes the finalizer code path (Dispose(disposing: false)) on this instance and returns
+        // whether it completed. Reads instance state so it is not flagged as a static candidate.
+        public bool SimulateFinalize()
+        {
+            Dispose(disposing: false);
+            return IsDisposed;
+        }
     }
 }
