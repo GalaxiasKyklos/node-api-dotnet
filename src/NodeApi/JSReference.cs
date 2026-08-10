@@ -386,10 +386,14 @@ public class JSReference : IDisposable
         {
             if (_context == null)
             {
-                // A no-context reference (for example one created from the native host scope) must
-                // be deleted on the JS thread. Only delete it if this finalizer happens to run
-                // while the matching JS scope is current on this thread; otherwise skip -- the JS
-                // environment is being torn down and the reference is released along with it.
+                // A no-context reference (for example one created from the native host scope) can
+                // only be deleted on the JS thread. CurrentOrNull is thread-static, so on the real
+                // GC finalizer thread it is null and this delete is skipped; the napi_ref is then
+                // reclaimed when the JS environment is destroyed. The guarded delete still runs if
+                // Dispose(disposing: false) is ever invoked on the owning JS thread. A no-context
+                // scope has no synchronization context, so the finalizer cannot marshal the delete
+                // to the JS thread; doing so would require an env-scoped cleanup queue in the
+                // native host (tracked as a follow-up).
                 JSValueScope? scope = JSValueScope.CurrentOrNull;
                 if (scope != null && scope.UncheckedEnvironmentHandle == _env)
                 {
