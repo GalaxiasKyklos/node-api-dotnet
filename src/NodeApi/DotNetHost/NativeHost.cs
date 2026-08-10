@@ -116,6 +116,12 @@ internal unsafe partial class NativeHost : IDisposable
         {
             Trace("    Failed to pin native host module: " + ex);
         }
+
+        // The host module pin above only covers node-api-dotnet's own code. The hosted .NET runtime
+        // (and its crypto libraries) register their own pthread_key TLS destructors for managed
+        // thread / finalizer / OpenSSL cleanup; pin those too so they cannot be unmapped before a
+        // worker thread that used them exits. See NativeLibraryPinning for details.
+        NativeLibraryPinning.PinLoadedRuntimeLibraries();
     }
 
     // dladdr and dlopen are exported by libSystem on macOS. On Linux they are exported by

@@ -187,6 +187,11 @@ public sealed class ManagedHost : JSEventEmitter, IDisposable
 
         DebugHelper.AttachDebugger("NODE_API_DEBUG_RUNTIME");
 
+        // Pin the .NET runtime's native libraries (CLR, crypto, etc.) so their pthread_key TLS
+        // destructors are never unmapped and cannot dangle when a worker thread tears down. This
+        // complements the native host module pin done by the (native) host. Best-effort/idempotent.
+        NodeApiNativeLibrary.PreventRuntimeLibrariesUnload();
+
         JSRuntime runtime = new NodejsRuntime();
 
         if (Debugger.IsAttached ||
