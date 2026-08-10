@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System;
+using Microsoft.JavaScript.NodeApi.Interop;
 using Xunit;
 using static Microsoft.JavaScript.NodeApi.Runtime.JSRuntime;
 
@@ -12,9 +13,13 @@ public class JSReferenceTests
     private readonly MockJSRuntime _mockRuntime = new();
 
     private JSValueScope TestScope(JSValueScopeType scopeType)
+        => TestScope(scopeType, new MockJSRuntime.SynchronizationContext());
+
+    private JSValueScope TestScope(
+        JSValueScopeType scopeType, JSSynchronizationContext synchronizationContext)
     {
         napi_env env = new(Environment.CurrentManagedThreadId);
-        return new(scopeType, env, _mockRuntime, new MockJSRuntime.SynchronizationContext());
+        return new(scopeType, env, _mockRuntime, synchronizationContext);
     }
 
     [Fact]
@@ -127,19 +132,31 @@ public class JSReferenceTests
         Assert.True(reference.IsDisposed);
     }
 
-    // A reference with a runtime context posts its cleanup to the JS thread. The finalizer must
-    // likewise never throw when it runs on a thread with no current scope.
+    // A reference with a runtime context posts its cleanup to the JS thread instead of deleting it
+    // inline. The finalizer must never throw when it runs on a thread with no current scope, and
+    // the posted delete must actually release the native reference once the JS thread pumps it.
     [Fact]
     public void FinalizeContextReferenceFromDifferentThreadDoesNotThrow()
     {
-        using JSValueScope rootScope = TestScope(JSValueScopeType.Root);
+        var syncContext = new MockJSRuntime.RecordingSynchronizationContext();
+        using JSValueScope rootScope = TestScope(JSValueScopeType.Root, syncContext);
 
         JSValue value = JSValue.CreateObject();
         var reference = new FinalizerTestReference(value);
+        napi_ref handle = reference.Handle;
+        Assert.True(_mockRuntime.HasReference(handle));
 
         TestUtils.RunInThread(() => reference.SimulateFinalize()).Wait();
 
         Assert.True(reference.IsDisposed);
+
+        // The delete is deferred to the JS thread, not run inline on the finalizer thread.
+        Assert.True(_mockRuntime.HasReference(handle));
+        Assert.Equal(1, syncContext.PendingCount);
+
+        // Pumping the sync context runs the posted delete, releasing the native reference.
+        Assert.Equal(1, syncContext.RunPendingCallbacks());
+        Assert.False(_mockRuntime.HasReference(handle));
     }
 
     // Explicit disposal (disposing: true) preserves the documented behavior of asserting thread
