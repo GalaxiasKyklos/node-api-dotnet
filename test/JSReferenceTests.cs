@@ -107,4 +107,63 @@ public class JSReferenceTests
         _mockRuntime.MockReleaseWeakReferenceValue(reference.Handle);
         Assert.False(reference.TryGetValue(out _));
     }
+
+    // A reference created from a NoContext scope (as the native host does) has a null runtime
+    // context, so its finalizer takes the branch that previously asserted thread access. The GC
+    // finalizer runs on a thread with no JS scope, so that assertion threw
+    // JSInvalidThreadAccessException out of the finalizer, which terminates the process (the
+    // reported worker-teardown crash). The finalizer must instead complete without throwing.
+    [Fact]
+    public void FinalizeNoContextReferenceFromDifferentThreadDoesNotThrow()
+    {
+        using JSValueScope noContextScope = TestScope(JSValueScopeType.NoContext);
+
+        JSValue value = JSValue.CreateObject();
+        var reference = new FinalizerTestReference(value);
+
+        // Run on a new thread that has no current scope, simulating the GC finalizer thread.
+        TestUtils.RunInThread(() => reference.SimulateFinalize()).Wait();
+
+        Assert.True(reference.IsDisposed);
+    }
+
+    // A reference with a runtime context posts its cleanup to the JS thread. The finalizer must
+    // likewise never throw when it runs on a thread with no current scope.
+    [Fact]
+    public void FinalizeContextReferenceFromDifferentThreadDoesNotThrow()
+    {
+        using JSValueScope rootScope = TestScope(JSValueScopeType.Root);
+
+        JSValue value = JSValue.CreateObject();
+        var reference = new FinalizerTestReference(value);
+
+        TestUtils.RunInThread(() => reference.SimulateFinalize()).Wait();
+
+        Assert.True(reference.IsDisposed);
+    }
+
+    // Explicit disposal (disposing: true) preserves the documented behavior of asserting thread
+    // access for a no-context reference; only the finalizer path is made non-throwing.
+    [Fact]
+    public void DisposeNoContextReferenceFromDifferentThreadThrows()
+    {
+        using JSValueScope noContextScope = TestScope(JSValueScopeType.NoContext);
+
+        JSValue value = JSValue.CreateObject();
+        JSReference reference = new(value);
+
+        TestUtils.RunInThread(() =>
+        {
+            Assert.Throws<JSInvalidThreadAccessException>(() => reference.Dispose());
+        }).Wait();
+    }
+
+    // Exposes the protected finalizer code path (Dispose(disposing: false)) so a test can invoke it
+    // directly on a non-JS thread, deterministically reproducing what the GC finalizer does.
+    private sealed class FinalizerTestReference : JSReference
+    {
+        public FinalizerTestReference(JSValue value) : base(value) { }
+
+        public void SimulateFinalize() => Dispose(disposing: false);
+    }
 }

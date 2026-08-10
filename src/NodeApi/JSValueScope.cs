@@ -90,6 +90,13 @@ public sealed class JSValueScope : IDisposable
         throw new JSInvalidThreadAccessException(currentScope: null);
 
     /// <summary>
+    /// Gets the current JS value scope for the calling thread, or null if no scope is
+    /// established. Unlike <see cref="Current"/>, this never throws, so it is safe to use from
+    /// contexts that must not throw, such as finalizers.
+    /// </summary>
+    internal static JSValueScope? CurrentOrNull => s_currentScope;
+
+    /// <summary>
     /// Gets the environment handle for the scope, or throws an exception if the scope is
     /// disposed or access from the current thread is invalid.
     /// </summary>

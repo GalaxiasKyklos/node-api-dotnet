@@ -346,12 +346,17 @@ public class JSReference : IDisposable
 
     protected virtual void Dispose(bool disposing)
     {
-        if (!IsDisposed)
+        if (IsDisposed)
         {
-            IsDisposed = true;
+            return;
+        }
 
-            // The context may be null if the reference was created from a "no-context" scope such
-            // as the native host. In that case the reference must be disposed from the JS thread.
+        IsDisposed = true;
+
+        if (disposing)
+        {
+            // Explicit disposal preserves the documented behavior, including asserting that a
+            // no-context reference is disposed from the JS thread.
             if (_context == null)
             {
                 ThrowIfInvalidThreadAccess();
@@ -363,6 +368,56 @@ public class JSReference : IDisposable
                     () => _context.Runtime.DeleteReference(
                         _env, _handle).ThrowIfFailed(), allowSync: true);
             }
+        }
+        else
+        {
+            // The finalizer runs on the GC finalizer thread and MUST NOT throw: an exception
+            // escaping a finalizer terminates the process (observed as a fatal
+            // JSInvalidThreadAccessException / SIGSEGV during worker-thread teardown). Release the
+            // native reference only if it can be done without switching threads or asserting an
+            // active JS scope, and never let an exception propagate.
+            DisposeFromFinalizer();
+        }
+    }
+
+    private void DisposeFromFinalizer()
+    {
+        try
+        {
+            if (_context == null)
+            {
+                // A no-context reference (for example one created from the native host scope) must
+                // be deleted on the JS thread. Only delete it if this finalizer happens to run
+                // while the matching JS scope is current on this thread; otherwise skip -- the JS
+                // environment is being torn down and the reference is released along with it.
+                JSValueScope? scope = JSValueScope.CurrentOrNull;
+                if (scope != null && scope.UncheckedEnvironmentHandle == _env)
+                {
+                    scope.Runtime.DeleteReference(_env, _handle);
+                }
+            }
+            else
+            {
+                // Post the delete to the JS thread. The synchronization context is a safe no-op
+                // once it has been disposed (that is, after the worker has been torn down).
+                _context.SynchronizationContext?.Post(
+                    () =>
+                    {
+                        try
+                        {
+                            _context.Runtime.DeleteReference(_env, _handle);
+                        }
+                        catch
+                        {
+                            // The environment may already be gone; nothing more can be done.
+                        }
+                    },
+                    allowSync: false);
+            }
+        }
+        catch
+        {
+            // Never allow an exception to escape the finalizer.
         }
     }
 
