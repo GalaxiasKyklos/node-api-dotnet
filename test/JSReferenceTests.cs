@@ -196,7 +196,7 @@ public class JSReferenceTests
     // Creates a throwing reference in a separate non-inlined frame and keeps no reference to it, so
     // it becomes eligible for finalization once this method returns.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void CreateAndAbandonThrowingReference()
+    private static void CreateAndAbandonThrowingReference()
     {
         JSValue value = JSValue.CreateObject();
         _ = new ThrowingFinalizerReference(value);
