@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System;
+using System.Runtime.CompilerServices;
 using Microsoft.JavaScript.NodeApi.Interop;
 using Xunit;
 using static Microsoft.JavaScript.NodeApi.Runtime.JSRuntime;
@@ -175,6 +176,32 @@ public class JSReferenceTests
         }).Wait();
     }
 
+    // The finalizer invokes the virtual Dispose(bool), so a derived override can throw before or
+    // after the base implementation runs. ~JSReference() must catch at its entry point, otherwise
+    // the exception escapes the finalizer and terminates the process. This drives real GC
+    // finalization of an override that throws; if the guarantee held only for the base method, the
+    // test host would crash instead of completing.
+    [Fact]
+    public void FinalizerSwallowsExceptionsFromDerivedDisposeOverride()
+    {
+        using JSValueScope rootScope = TestScope(JSValueScopeType.Root);
+
+        CreateAndAbandonThrowingReference();
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+    }
+
+    // Creates a throwing reference in a separate non-inlined frame and keeps no reference to it, so
+    // it becomes eligible for finalization once this method returns.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void CreateAndAbandonThrowingReference()
+    {
+        JSValue value = JSValue.CreateObject();
+        _ = new ThrowingFinalizerReference(value);
+    }
+
     // Exposes the protected finalizer code path (Dispose(disposing: false)) so a test can invoke it
     // directly on a non-JS thread, deterministically reproducing what the GC finalizer does.
     private sealed class FinalizerTestReference : JSReference
@@ -187,6 +214,19 @@ public class JSReferenceTests
         {
             Dispose(disposing: false);
             return IsDisposed;
+        }
+    }
+
+    // A reference whose Dispose(bool) override throws, to verify the finalizer entry point catches
+    // exceptions from derived overrides and not just from the base implementation.
+    private sealed class ThrowingFinalizerReference : JSReference
+    {
+        public ThrowingFinalizerReference(JSValue value) : base(value) { }
+
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            throw new InvalidOperationException("Simulated failure in a derived finalizer.");
         }
     }
 }

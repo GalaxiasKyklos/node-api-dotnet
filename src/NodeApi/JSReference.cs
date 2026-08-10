@@ -425,5 +425,18 @@ public class JSReference : IDisposable
         }
     }
 
-    ~JSReference() => Dispose(disposing: false);
+    ~JSReference()
+    {
+        // An exception escaping a finalizer terminates the process. Dispose(bool) is virtual, so a
+        // derived override may throw before or after the base implementation runs; catch here at
+        // the finalizer entry point so the no-throw guarantee also covers overrides.
+        try
+        {
+            Dispose(disposing: false);
+        }
+        catch
+        {
+            // Never allow an exception to escape the finalizer.
+        }
+    }
 }
